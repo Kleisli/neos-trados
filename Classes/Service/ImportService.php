@@ -107,7 +107,7 @@ class ImportService extends AbstractService
         /** @var \Neos\Neos\Domain\Model\Site $importedSite */
         $site = null;
         $xmlReader = new \XMLReader();
-        $xmlReader->open($pathAndFilename, null, LIBXML_PARSEHUGE);
+        $xmlReader->open($this->importDirectory.$pathAndFilename, null, LIBXML_PARSEHUGE);
 
         while ($xmlReader->read()) {
             if ($xmlReader->nodeType !== \XMLReader::ELEMENT || $xmlReader->name !== 'content') {

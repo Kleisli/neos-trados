@@ -68,7 +68,7 @@ class TradosCommandController extends CommandController
                 $this->output($this->exportService->exportToString());
             } else {
                 $this->exportService->exportToFile($filename);
-                $this->outputLine('<success>The tree starting at "/sites/%s" has been exported to "%s".</success>', [$startingPoint, $filename]);
+                $this->outputLine('<success>The tree starting at "%s" has been exported to "%s".</success>', [$this->exportService->getStartingPointNode()->getLabel(), $this->exportService->getExportDirectory().$filename]);
             }
         } catch (\Exception $exception) {
             $this->outputLine('<error>%s</error>', [$exception->getMessage()]);

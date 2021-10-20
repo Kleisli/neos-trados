@@ -19,6 +19,7 @@ use Neos\ContentRepository\Domain\Utility\NodePaths;
 use Neos\Flow\Annotations as Flow;
 use Neos\Neos\Domain\Model\Site;
 use Neos\Neos\Domain\Service\ContentContext;
+use Neos\Utility\Files;
 
 /**
  * The Trados Export Service
@@ -189,8 +190,11 @@ class ExportService extends AbstractService
      */
     public function exportToFile(string $pathAndFilename)
     {
+        Files::createDirectoryRecursively($this->exportDirectory);
+        Files::createDirectoryRecursively($this->importDirectory);
+
         $this->xmlWriter = new \XMLWriter();
-        $this->xmlWriter->openUri($pathAndFilename);
+        $this->xmlWriter->openUri($this->exportDirectory.$pathAndFilename);
         $this->xmlWriter->setIndent(true);
 
         $this->exportToXmlWriter();
@@ -474,4 +478,13 @@ class ExportService extends AbstractService
             return (isset($combination[$this->languageDimension]) && $combination[$this->languageDimension][0] === $sourceLanguage);
         });
     }
+
+    /**
+     * @return NodeInterface
+     */
+    public function getStartingPointNode(): NodeInterface
+    {
+        return $this->startingPointNode;
+    }
+
 }

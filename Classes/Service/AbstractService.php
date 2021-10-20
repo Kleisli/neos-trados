@@ -27,6 +27,18 @@ class AbstractService
     protected $languageDimension;
 
     /**
+     * @Flow\InjectConfiguration(path = "export.directory")
+     * @var string
+     */
+    protected string $exportDirectory;
+
+    /**
+     * @Flow\InjectConfiguration(path = "import.directory")
+     * @var string
+     */
+    protected string $importDirectory;
+
+    /**
      * @Flow\Inject
      * @var \Neos\Neos\Domain\Service\ContentContextFactory
      */
@@ -49,4 +61,14 @@ class AbstractService
      * @var \Neos\ContentRepository\Domain\Repository\WorkspaceRepository
      */
     protected $workspaceRepository;
+
+    /**
+     * @return string
+     */
+    public function getExportDirectory(): string
+    {
+        return $this->exportDirectory;
+    }
+
+
 }

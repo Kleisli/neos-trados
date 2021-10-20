@@ -5,3 +5,6 @@ Flownative:
       export:
         workspace: 'live'
         documentTypeFilter: 'Neos.Neos:Document'
+        directory: 'Data/Trados/Export/'
+      import:
+        directory: 'Data/Trados/Import/'
