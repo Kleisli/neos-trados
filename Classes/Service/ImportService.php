@@ -11,6 +11,7 @@ namespace Flownative\Neos\Trados\Service;
  * source code.
  */
 
+use Neos\ContentRepository\Domain\Model\NodeInterface;
 use Neos\ContentRepository\Domain\Model\Workspace;
 use Neos\Flow\Annotations as Flow;
 use Neos\Flow\Package\Exception\InvalidPackageStateException;
@@ -146,7 +147,7 @@ class ImportService extends AbstractService
             if ($formatVersion === null) {
                 throw new \RuntimeException('The XML file could not be parsed.', 1474364384);
             }
-            if ($formatVersion !== self::SUPPORTED_FORMAT_VERSION) {
+            if (!in_array($formatVersion, self::SUPPORTED_FORMAT_VERSIONS)) {
                 throw new \RuntimeException(sprintf('The XML file contains an unsupported format version (%s).', $formatVersion), 1473411690);
             }
 
@@ -193,13 +194,14 @@ class ImportService extends AbstractService
                     if (!$xmlReader->isEmptyElement) {
                         $this->parseElement($xmlReader);
                     }
-                break;
+                    break;
+
                 case \XMLReader::END_ELEMENT:
                     if ((string)$xmlReader->name === 'nodes') {
                         return; // all done, reached the closing </nodes> tag
                     }
                     $this->parseEndElement($xmlReader);
-                break;
+                    break;
             }
         }
     }
@@ -219,19 +221,21 @@ class ImportService extends AbstractService
                 $this->currentNodeIdentifier = $xmlReader->getAttribute('identifier');
                 $this->currentNodeName = $xmlReader->getAttribute('nodeName');
                 $this->currentNodeVariants = array_filter($this->contentContext->getNodeVariantsByIdentifier($this->currentNodeIdentifier));
-            break;
+                break;
             case 'variant':
                 $this->currentNodeData = [
                     'dimensionValues' => [],
                     'properties' => []
                 ];
-            break;
+                break;
             case 'dimensions':
                 $this->currentNodeData['dimensionValues'] = $this->parseDimensionsElement($xmlReader);
-            break;
+                break;
             case 'properties':
                 $this->currentNodeData['properties'] = $this->parsePropertiesElement($xmlReader);
-            break;
+                break;
+            case 'childNodes':
+                break;
             default:
                 throw new \Exception(sprintf('Unexpected element <%s> ', $elementName), 1423578065);
         }
@@ -248,6 +252,7 @@ class ImportService extends AbstractService
     {
         switch ($reader->name) {
             case 'node':
+            case 'childNodes':
             break;
             case 'variant':
                 // we have collected all data for the node so we save it
@@ -340,23 +345,39 @@ class ImportService extends AbstractService
             return;
         }
 
+        $targetDimensionValues = array_merge($translatedData['dimensionValues'], [$this->languageDimension => [$this->targetLanguage]]);
+        ksort($targetDimensionValues);
+
+        $sourceDimensionValues = array_merge($translatedData['dimensionValues'], [$this->languageDimension => [$this->sourceLanguage]]);
+        ksort($sourceDimensionValues);
+
         /** @var \Neos\ContentRepository\Domain\Model\NodeInterface $currentNodeVariant */
-        $currentNodeVariant = array_reduce($this->currentNodeVariants, function ($carry, \Neos\ContentRepository\Domain\Model\NodeInterface $nodeVariant) use ($translatedData) {
-            // best match
-            $dimensionsToMatch = array_merge($translatedData['dimensionValues'], [$this->languageDimension => [$this->targetLanguage]]);
-            if ($nodeVariant->getDimensions() === $dimensionsToMatch) {
-                return $nodeVariant;
+        $currentNodeVariant = array_reduce($this->currentNodeVariants, function ($carry, \Neos\ContentRepository\Domain\Model\NodeInterface $tmpCurrentNodeVariant) use ($targetDimensionValues, $sourceDimensionValues) {
+
+            $tmpCurrentNodeVariantDimensions = $tmpCurrentNodeVariant->getDimensions();
+            ksort($tmpCurrentNodeVariantDimensions);
+
+            // best match - target variant already exists
+            if ($tmpCurrentNodeVariantDimensions === $targetDimensionValues) {
+                return $tmpCurrentNodeVariant;
             }
 
-            // next best match
-            if ($nodeVariant->getDimensions() === $translatedData['dimensionValues']) {
-                return $nodeVariant;
+            // next best match - adopt from source variant
+            if ($tmpCurrentNodeVariantDimensions === $sourceDimensionValues) {
+                return $tmpCurrentNodeVariant;
             }
 
+            // if id didn't match $targetDimensionValues or $sourceDimensionValues
+            // keep current temporary value and/or look further
             return $carry;
         });
 
+        if ($currentNodeVariant === null) {
+            return;
+        }
+
         $dimensions = array_merge($translatedData['dimensionValues'], [$this->languageDimension => $this->languageDimensionPreset[$this->languageDimension]['values']]);
+
         $targetDimensions = array_map(
             function ($values) {
                 return current($values);
@@ -371,10 +392,6 @@ class ImportService extends AbstractService
             'targetDimensions' => $targetDimensions,
             'invisibleContentShown' => true,
         ]);
-
-        if ($currentNodeVariant === null) {
-            return;
-        }
 
         $propertiesToSet = [];
         foreach ($translatedData['properties'] as $key => $value) {

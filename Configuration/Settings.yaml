@@ -2,9 +2,15 @@ Flownative:
   Neos:
     Trados:
       languageDimension: 'language'
+      # format versions
+      # 1.0 : flat export, all nodes in one hierarchy
+      # 2.0 : all documents in one hierarchy, nested content
+      format_version: '2.0'
+      debug: false
       export:
         workspace: 'live'
         documentTypeFilter: 'Neos.Neos:Document'
+        contentTypeFilter: '!Neos.Neos:Document'
         directory: 'Data/Trados/Export/'
       import:
         directory: 'Data/Trados/Import/'

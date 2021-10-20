@@ -41,6 +41,12 @@ class ExportService extends AbstractService
     protected string $documentTypeFilter;
 
     /**
+     * @Flow\InjectConfiguration(path = "export.contentTypeFilter")
+     * @var string
+     */
+    protected string $contentTypeFilter;
+
+    /**
      * The XMLWriter that is used to construct the export.
      *
      * @var \XMLWriter
@@ -92,6 +98,11 @@ class ExportService extends AbstractService
     protected string $sourceLanguage;
 
     /**
+     * @var array
+     */
+    protected array $sourceContexts = [];
+
+    /**
      * @var string|null
      */
     protected ?string $targetLanguage;
@@ -124,27 +135,35 @@ class ExportService extends AbstractService
                                string $sourceLanguage,
                                string $targetLanguage = null,
                                \DateTime $modifiedAfter = null,
-                               bool $ignoreHidden = true,
-                               string $documentTypeFilter = 'Neos.Neos:Document',
-                               int $depth = 0)
+                               bool $ignoreHidden = true)
     {
         $this->startingPoint = $startingPoint;
         $this->sourceLanguage = $sourceLanguage;
         $this->targetLanguage = $targetLanguage;
         $this->modifiedAfter = $modifiedAfter;
         $this->ignoreHidden = $ignoreHidden;
-        $this->documentTypeFilter = $documentTypeFilter;
-        $this->depth = $depth;
 
+        $allowedContentCombinations = $this->getAllowedContentCombinationsForSourceLanguage($this->sourceLanguage);
         /** @var ContentContext $contentContext */
         $contentContext = $this->contentContextFactory->create([
             'workspaceName' => $this->workspaceName,
             'invisibleContentShown' => !$this->ignoreHidden,
             'removedContentShown' => false,
             'inaccessibleContentShown' => !$this->ignoreHidden,
-            'dimensions' => current($this->getAllowedContentCombinationsForSourceLanguage($this->sourceLanguage))
+            'dimensions' => [$this->languageDimension => [$this->sourceLanguage]]
         ]);
         $this->contentContext = $contentContext;
+
+        foreach ($allowedContentCombinations as $contentDimensions) {
+            /** @var ContentContext $sourceContext */
+            $sourceContext = $this->contentContextFactory->create([
+                'invisibleContentShown' => $contentContext->isInvisibleContentShown(),
+                'removedContentShown' => false,
+                'inaccessibleContentShown' => $contentContext->isInaccessibleContentShown(),
+                'dimensions' => $contentDimensions
+            ]);
+            $this->sourceContexts[] = $sourceContext;
+        }
 
         $startingPointNode = $this->contentContext->getNodeByIdentifier($startingPoint);
         if($startingPointNode === null){
@@ -225,7 +244,18 @@ class ExportService extends AbstractService
         }
 
         $this->xmlWriter->startElement('nodes');
-        $this->exportNodes($this->startingPointNode->findNodePath(), $this->contentContext);
+        $this->xmlWriter->writeAttribute('formatVersion', $this->formatVersion);
+        switch ($this->formatVersion){
+            case '1.0':
+                $this->exportNodes($this->startingPointNode->findNodePath());
+                break;
+            case '2.0':
+                $this->exportDocuments($this->startingPointNode->findNodePath());
+                break;
+            default:
+                throw new \RuntimeException(sprintf('Tried to export unsupported format version (%s).', $this->formatVersion), 1634721624);
+        }
+
         $this->xmlWriter->endElement(); // nodes
 
         $this->xmlWriter->endElement();
@@ -236,13 +266,13 @@ class ExportService extends AbstractService
      * Exports the node data of all nodes in the given sub-tree
      * by writing them to the given XMLWriter.
      *
-     * @param string $startingPointNodePath path to the root node of the sub-tree to export. The specified node will not be included, only its sub nodes.
-     * @param ContentContext $contentContext
+     * @param string $startingPointNodePath path to the root node of the sub-tree to export.
      * @return void
      * @throws \Exception
      */
-    protected function exportNodes(string $startingPointNodePath, ContentContext $contentContext)
+    protected function exportNodes(string $startingPointNodePath)
     {
+        $contentContext = $this->contentContext;
         $this->securityContext->withoutAuthorizationChecks(function () use ($startingPointNodePath, $contentContext) {
             $nodeDataList = $this->findNodeDataListToExport($startingPointNodePath, $contentContext);
             $this->exportNodeDataList($nodeDataList);
@@ -253,30 +283,34 @@ class ExportService extends AbstractService
      * Find all nodes of the specified workspace lying below the path specified by
      * (and including) the given starting point.
      *
-     * @param string $pathStartingPoint Absolute path specifying the starting point
+     * @param string $startingPointNodePath Absolute path specifying the starting point
      * @param ContentContext $contentContext
+     * @param string|null $nodeTypeFilter
      * @return array<NodeData>
      * @throws \Neos\Flow\Persistence\Exception\IllegalObjectTypeException
      */
-    protected function findNodeDataListToExport(string $pathStartingPoint, ContentContext $contentContext): array
+    protected function findNodeDataListToExport(string $startingPointNodePath, ContentContext $contentContext, string $nodeTypeFilter = null): array
     {
-        $allowedContentCombinations = $this->getAllowedContentCombinationsForSourceLanguage($this->sourceLanguage);
-        $sourceContexts = [];
 
         /** @var NodeData[] $nodeDataList */
         $nodeDataList = [];
-        foreach ($allowedContentCombinations as $contentDimensions) {
-            $nodeDataList = array_merge(
-                $nodeDataList,
-                [$contentContext->getNode($pathStartingPoint)->getNodeData()],
-                $this->nodeDataRepository->findByParentAndNodeType($pathStartingPoint, null, $contentContext->getWorkspace(), $contentDimensions, $contentContext->isRemovedContentShown() ? null : false, true)
-            );
-            $sourceContexts[] = $this->contentContextFactory->create([
-                'invisibleContentShown' => $contentContext->isInvisibleContentShown(),
-                'removedContentShown' => false,
-                'inaccessibleContentShown' => $contentContext->isInaccessibleContentShown(),
-                'dimensions' => $contentDimensions
-            ]);
+        /** @var ContentContext $sourceContext */
+        foreach ($this->sourceContexts as $sourceContext) {
+
+            // when exporting 1.0 or Documents in 2.0
+            // add starting point and get nodes recursively
+            if($this->formatVersion == '1.0' || $nodeTypeFilter == $this->documentTypeFilter){
+                $nodeDataList = array_merge(
+                    $nodeDataList,
+                    [$sourceContext->getNode($startingPointNodePath)->getNodeData()],
+                    $this->nodeDataRepository->findByParentAndNodeTypeRecursively($startingPointNodePath, $nodeTypeFilter, $contentContext->getWorkspace(), $sourceContext->getDimensions(), $contentContext->isRemovedContentShown() ? null : false)
+                );
+            }elseif($nodeTypeFilter == $this->contentTypeFilter){
+                $nodeDataList = array_merge(
+                    $nodeDataList,
+                    $this->nodeDataRepository->findByParentAndNodeType($startingPointNodePath, $nodeTypeFilter, $contentContext->getWorkspace(), $sourceContext->getDimensions(), $contentContext->isRemovedContentShown() ? null : false)
+                );
+            }
         }
 
         $uniqueNodeDataList = [];
@@ -293,9 +327,10 @@ class ExportService extends AbstractService
         foreach ($nodeDataList as $nodeData) {
             $uniqueNodeDataList[$nodeData->getIdentifier()] = $nodeData;
         }
-        $nodeDataList = array_filter(array_values($uniqueNodeDataList), function (NodeData $nodeData) use ($sourceContexts) {
+
+        $nodeDataList = array_filter(array_values($uniqueNodeDataList), function (NodeData $nodeData) {
             /** @var ContentContext $sourceContext */
-            foreach ($sourceContexts as $sourceContext) {
+            foreach ($this->sourceContexts as $sourceContext) {
                 if ($sourceContext->getDimensions()[$this->languageDimension][0] !== $this->sourceLanguage) {
                     continue;
                 }
@@ -328,17 +363,30 @@ class ExportService extends AbstractService
             return $nodeData !== null;
         });
 
-        // Sort nodeDataList by path, replacing "/" with "!" (the first visible ASCII character)
-        // because there may be characters like "-" in the node path
-        // that would break the sorting order
-        usort($nodeDataList,
-            function (NodeData $node1, NodeData $node2) {
-                return strcmp(
-                    str_replace("/", "!", $node1->getPath()),
-                    str_replace("/", "!", $node2->getPath())
-                );
-            }
-        );
+        // when exporting 1.0 or Documents in 2.0
+        // sort by path, else sort by index
+        if($this->formatVersion == '1.0' || $nodeTypeFilter == $this->documentTypeFilter){
+            // Sort nodeDataList by path, replacing "/" with "!" (the first visible ASCII character)
+            // because there may be characters like "-" in the node path
+            // that would break the sorting order
+            usort($nodeDataList,
+                function (NodeData $node1, NodeData $node2) {
+                    return strcmp(
+                        str_replace("/", "!", $node1->getPath()),
+                        str_replace("/", "!", $node2->getPath())
+                    );
+                }
+            );
+        }elseif($nodeTypeFilter == $this->contentTypeFilter){
+            // Sort nodeDataList by path, replacing "/" with "!" (the first visible ASCII character)
+            // because there may be characters like "-" in the node path
+            // that would break the sorting order
+            usort($nodeDataList,
+                function (NodeData $node1, NodeData $node2) {
+                    return $node1->getIndex() <=> $node2->getIndex();
+                }
+            );
+        }
 
         return $nodeDataList;
     }
@@ -352,12 +400,49 @@ class ExportService extends AbstractService
      */
     protected function exportNodeDataList(array &$nodeDataList)
     {
-        $this->xmlWriter->writeAttribute('formatVersion', self::SUPPORTED_FORMAT_VERSION);
-
         $currentNodeDataIdentifier = null;
+        $lastNodeDataIdentifier = $nodeDataList[count($nodeDataList)-1]->getIdentifier();
         foreach ($nodeDataList as $nodeData) {
-            $this->writeNode($nodeData, $currentNodeDataIdentifier);
+            $this->writeNode($nodeData, $lastNodeDataIdentifier, $currentNodeDataIdentifier);
         }
+    }
+
+    /**
+     * Exports the node data of all nodes in the given sub-tree
+     * by writing them to the given XMLWriter.
+     *
+     * @param string $startingPointNodePath path to the root node of the sub-tree to export. The specified node will not be included, only its sub nodes.
+     * @return void
+     * @throws \Exception
+     */
+    protected function exportDocuments(string $startingPointNodePath)
+    {
+        $contentContext = $this->contentContext;
+        $this->securityContext->withoutAuthorizationChecks(function () use ($startingPointNodePath, $contentContext) {
+            $nodeDataList = $this->findNodeDataListToExport($startingPointNodePath, $contentContext, $this->documentTypeFilter);
+            if(count($nodeDataList) > 0) {
+                $this->exportNodeDataList($nodeDataList);
+            }
+        });
+    }
+
+    /**
+     * Exports the node data of all nodes in the given sub-tree
+     * by writing them to the given XMLWriter.
+     *
+     * @param string $startingPointNodePath path to the root node of the sub-tree to export. The specified node will not be included, only its sub nodes.
+     * @return void
+     * @throws \Exception
+     */
+    protected function exportContent(string $startingPointNodePath)
+    {
+        $contentContext = $this->contentContext;
+        $this->securityContext->withoutAuthorizationChecks(function () use ($startingPointNodePath, $contentContext) {
+            $nodeDataList = $this->findNodeDataListToExport($startingPointNodePath, $contentContext, $this->contentTypeFilter);
+            if(count($nodeDataList) > 0) {
+                $this->exportNodeDataList($nodeDataList);
+            }
+        });
     }
 
     /**
@@ -368,25 +453,35 @@ class ExportService extends AbstractService
      * @return void The result is written directly into $this->xmlWriter
      * @throws \Neos\ContentRepository\Exception\NodeTypeNotFoundException
      */
-    protected function writeNode(NodeData $nodeData, string &$currentNodeDataIdentifier = null)
+    protected function writeNode(NodeData $nodeData, string $lastNodeDataIdentifier, string &$currentNodeDataIdentifier = null)
     {
-        $nodeName = $nodeData->getName();
-
-        // is this a variant of currently open node?
-        // then close all open node and start new node element
-        // else reuse the currently open node element and add a new variant element
-        if ($currentNodeDataIdentifier === null || $currentNodeDataIdentifier !== $nodeData->getIdentifier()) {
-            if ($currentNodeDataIdentifier !== null) {
-                $this->xmlWriter->endElement(); // "node"
-            }
-
-            $currentNodeDataIdentifier = $nodeData->getIdentifier();
-            $this->xmlWriter->startElement('node');
-            $this->xmlWriter->writeAttribute('identifier', $nodeData->getIdentifier());
-            $this->xmlWriter->writeAttribute('nodeName', $nodeName);
+        $currentNodeDataIdentifier = $nodeData->getIdentifier();
+        $this->xmlWriter->startElement('node');
+        if($this->formatVersion == '2.0') {
+            $this->xmlWriter->writeAttribute('nodeType', $nodeData->getNodeType()->getName());
+        }
+        $this->xmlWriter->writeAttribute('identifier', $nodeData->getIdentifier());
+        $this->xmlWriter->writeAttribute('nodeName', $nodeData->getName());
+        if($this->debug) {
+            $this->xmlWriter->writeAttribute('sortingIndex', $nodeData->getIndex());
         }
 
-        $this->writeVariant($nodeData);
+        /** @var ContentContext $sourceContext */
+
+        $nodeVariants = $this->contentContext->getNodeVariantsByIdentifier($nodeData->getIdentifier());
+        foreach ($nodeVariants as $nodeVariant){
+            if($nodeVariant->getDimensions()[$this->languageDimension][0] == $this->sourceLanguage) {
+                $this->writeVariant($nodeVariant->getNodeData());
+            }
+        }
+
+        if($this->formatVersion == '2.0'){
+            $this->xmlWriter->startElement('childNodes');
+            $this->exportContent($nodeData->getPath());
+            $this->xmlWriter->endElement();
+        }
+
+        $this->xmlWriter->endElement(); // "node"
     }
 
     /**
@@ -399,7 +494,15 @@ class ExportService extends AbstractService
     protected function writeVariant(NodeData $nodeData)
     {
         $this->xmlWriter->startElement('variant');
-        $this->xmlWriter->writeAttribute('nodeType', $nodeData->getNodeType()->getName());
+        if($this->formatVersion == '1.0') {
+            $this->xmlWriter->writeAttribute('nodeType', $nodeData->getNodeType()->getName());
+        }
+        if($this->debug) {
+            $this->xmlWriter->writeAttribute('nodeType', $nodeData->getNodeType()->getName());
+            $this->xmlWriter->writeAttribute('identifier', $nodeData->getIdentifier());
+            $this->xmlWriter->writeAttribute('nodeName', $nodeData->getName());
+            $this->xmlWriter->writeAttribute('dimensionsHash', $nodeData->getDimensionsHash());
+        }
 
         $this->writeDimensions($nodeData);
         $this->writeProperties($nodeData);
@@ -418,7 +521,9 @@ class ExportService extends AbstractService
         $this->xmlWriter->startElement('dimensions');
         foreach ($nodeData->getDimensionValues() as $dimensionKey => $dimensionValues) {
             foreach ($dimensionValues as $dimensionValue) {
-                $this->xmlWriter->writeElement($dimensionKey, $dimensionValue);
+                //if($this->formatVersion == '1.0' || $dimensionKey != $this->languageDimension) {
+                    $this->xmlWriter->writeElement($dimensionKey, $dimensionValue);
+               // }
             }
         }
         $this->xmlWriter->endElement();
@@ -445,7 +550,7 @@ class ExportService extends AbstractService
 
                 $declaredPropertyType = $nodeType->getPropertyType($propertyName);
                 if ($declaredPropertyType === 'string') {
-                    $this->writeProperty($propertyName, $propertyValue);
+                    $this->writeStringProperty($propertyName, $propertyValue);
                 }
             }
         }
@@ -458,7 +563,7 @@ class ExportService extends AbstractService
      * @param string $propertyName The name of the property
      * @param string $propertyValue The value of the property
      */
-    protected function writeProperty(string $propertyName, string $propertyValue)
+    protected function writeStringProperty(string $propertyName, string $propertyValue)
     {
         $this->xmlWriter->startElement($propertyName);
         $this->xmlWriter->writeAttribute('type', 'string');

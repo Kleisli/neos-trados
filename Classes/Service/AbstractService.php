@@ -18,13 +18,25 @@ class AbstractService
     /**
      * @var string
      */
-    const SUPPORTED_FORMAT_VERSION = '1.0';
+    const SUPPORTED_FORMAT_VERSIONS = ['1.0', '2.0'];
+
+    /**
+     * @Flow\InjectConfiguration(path = "debug")
+     * @var bool
+     */
+    protected $debug;
 
     /**
      * @Flow\InjectConfiguration(path = "languageDimension")
      * @var string
      */
     protected $languageDimension;
+
+    /**
+     * @Flow\InjectConfiguration(path = "format_version")
+     * @var string
+     */
+    protected $formatVersion;
 
     /**
      * @Flow\InjectConfiguration(path = "export.directory")
