@@ -32,7 +32,7 @@ class ExportService extends AbstractService
      * @Flow\InjectConfiguration(path = "export.workspace")
      * @var string
      */
-    protected string $workspaceName;
+    protected string $sourceWorkspaceName;
 
     /**
      * @Flow\InjectConfiguration(path = "export.documentTypeFilter")
@@ -146,7 +146,7 @@ class ExportService extends AbstractService
         $allowedContentCombinations = $this->getAllowedContentCombinationsForSourceLanguage($this->sourceLanguage);
         /** @var ContentContext $contentContext */
         $contentContext = $this->contentContextFactory->create([
-            'workspaceName' => $this->workspaceName,
+            'workspaceName' => $this->sourceWorkspaceName,
             'invisibleContentShown' => !$this->ignoreHidden,
             'removedContentShown' => false,
             'inaccessibleContentShown' => !$this->ignoreHidden,
@@ -177,8 +177,8 @@ class ExportService extends AbstractService
         $pathArray = explode('/', $this->startingPointNode->findNodePath());
         $this->site = $this->siteRepository->findOneByNodeName($pathArray[2]);
 
-        if($this->workspaceRepository->findOneByName($this->workspaceName) === null){
-            throw new \RuntimeException(sprintf('Could not find workspace "%s"', $this->workspaceName), 14732418113);
+        if($this->workspaceRepository->findOneByName($this->sourceWorkspaceName) === null){
+            throw new \RuntimeException(sprintf('Could not find workspace "%s"', $this->sourceWorkspaceName), 14732418113);
         }
 
     }
@@ -234,7 +234,17 @@ class ExportService extends AbstractService
 
         $this->xmlWriter->writeAttribute('name', $this->site->getName());
         $this->xmlWriter->writeAttribute('sitePackageKey', $this->site->getSiteResourcesPackageKey());
-        $this->xmlWriter->writeAttribute('workspace', $this->workspaceName);
+        switch ($this->formatVersion){
+            case '1.0':
+                $this->xmlWriter->writeAttribute('workspace', $this->sourceWorkspaceName);
+                break;
+            case '2.0':
+                $this->xmlWriter->writeAttribute('sourceWorkspace', $this->sourceWorkspaceName);
+                break;
+            default:
+                throw new \RuntimeException(sprintf('Tried to export unsupported format version (%s).', $this->formatVersion), 1634721624);
+        }
+
         $this->xmlWriter->writeAttribute('sourceLanguage', $this->sourceLanguage);
         if ($this->targetLanguage !== null) {
             $this->xmlWriter->writeAttribute('targetLanguage', $this->targetLanguage);
@@ -378,9 +388,6 @@ class ExportService extends AbstractService
                 }
             );
         }elseif($nodeTypeFilter == $this->contentTypeFilter){
-            // Sort nodeDataList by path, replacing "/" with "!" (the first visible ASCII character)
-            // because there may be characters like "-" in the node path
-            // that would break the sorting order
             usort($nodeDataList,
                 function (NodeData $node1, NodeData $node2) {
                     return $node1->getIndex() <=> $node2->getIndex();
@@ -400,10 +407,8 @@ class ExportService extends AbstractService
      */
     protected function exportNodeDataList(array &$nodeDataList)
     {
-        $currentNodeDataIdentifier = null;
-        $lastNodeDataIdentifier = $nodeDataList[count($nodeDataList)-1]->getIdentifier();
         foreach ($nodeDataList as $nodeData) {
-            $this->writeNode($nodeData, $lastNodeDataIdentifier, $currentNodeDataIdentifier);
+            $this->writeNode($nodeData);
         }
     }
 
@@ -430,7 +435,7 @@ class ExportService extends AbstractService
      * Exports the node data of all nodes in the given sub-tree
      * by writing them to the given XMLWriter.
      *
-     * @param string $startingPointNodePath path to the root node of the sub-tree to export. The specified node will not be included, only its sub nodes.
+     * @param string $startingPointNodePath path to the root node of the sub-tree to export.
      * @return void
      * @throws \Exception
      */
@@ -449,19 +454,24 @@ class ExportService extends AbstractService
      * Write a single node into the XML structure
      *
      * @param NodeData $nodeData The node data
-     * @param string|null $currentNodeDataIdentifier The "current" node, as passed by exportNodeDataList()
      * @return void The result is written directly into $this->xmlWriter
      * @throws \Neos\ContentRepository\Exception\NodeTypeNotFoundException
      */
-    protected function writeNode(NodeData $nodeData, string $lastNodeDataIdentifier, string &$currentNodeDataIdentifier = null)
+    protected function writeNode(NodeData $nodeData)
     {
-        $currentNodeDataIdentifier = $nodeData->getIdentifier();
         $this->xmlWriter->startElement('node');
-        if($this->formatVersion == '2.0') {
-            $this->xmlWriter->writeAttribute('nodeType', $nodeData->getNodeType()->getName());
+        switch ($this->formatVersion){
+            case '1.0':
+                $this->xmlWriter->writeAttribute('nodeName', $nodeData->getName());
+                break;
+            case '2.0':
+                $this->xmlWriter->writeAttribute('nodeType', $nodeData->getNodeType()->getName());
+                break;
+            default:
+                throw new \RuntimeException(sprintf('Tried to export unsupported format version (%s).', $this->formatVersion), 1634721624);
         }
         $this->xmlWriter->writeAttribute('identifier', $nodeData->getIdentifier());
-        $this->xmlWriter->writeAttribute('nodeName', $nodeData->getName());
+
         if($this->debug) {
             $this->xmlWriter->writeAttribute('sortingIndex', $nodeData->getIndex());
         }

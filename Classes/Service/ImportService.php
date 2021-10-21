@@ -54,11 +54,6 @@ class ImportService extends AbstractService
     protected $currentNodeIdentifier;
 
     /**
-     * @var string
-     */
-    protected $currentNodeName;
-
-    /**
      * @var array
      */
     protected $currentNodeData;
@@ -115,7 +110,17 @@ class ImportService extends AbstractService
                 continue;
             }
 
-            $sourceWorkspaceName = $xmlReader->getAttribute('workspace');
+            switch ($this->formatVersion){
+                case '1.0':
+                    $sourceWorkspaceName = $xmlReader->getAttribute('workspace');
+                    break;
+                case '2.0':
+                    $sourceWorkspaceName = $xmlReader->getAttribute('sourceWorkspace');
+                    break;
+                default:
+                    throw new \RuntimeException(sprintf('Tried to export unsupported format version (%s).', $this->formatVersion), 1634721624);
+            }
+
             $this->sourceLanguage = $xmlReader->getAttribute('sourceLanguage');
             $this->targetLanguage = $targetLanguage ?: $xmlReader->getAttribute('targetLanguage');
 
@@ -219,7 +224,6 @@ class ImportService extends AbstractService
         switch ($elementName) {
             case 'node':
                 $this->currentNodeIdentifier = $xmlReader->getAttribute('identifier');
-                $this->currentNodeName = $xmlReader->getAttribute('nodeName');
                 $this->currentNodeVariants = array_filter($this->contentContext->getNodeVariantsByIdentifier($this->currentNodeIdentifier));
                 break;
             case 'variant':
