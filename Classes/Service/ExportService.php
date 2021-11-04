@@ -374,16 +374,22 @@ class ExportService extends AbstractService
         });
 
         // when exporting 1.0 or Documents in 2.0
-        // sort by path, else sort by index
+        // sort by parent path, then by index else sort only by index
         if($this->formatVersion == '1.0' || $nodeTypeFilter == $this->documentTypeFilter){
+            // if we sort by index first, it will become the secondary sorting afterwards
+            usort($nodeDataList,
+                function (NodeData $node1, NodeData $node2) {
+                    return $node1->getIndex() <=> $node2->getIndex();
+                }
+            );
             // Sort nodeDataList by path, replacing "/" with "!" (the first visible ASCII character)
             // because there may be characters like "-" in the node path
             // that would break the sorting order
             usort($nodeDataList,
                 function (NodeData $node1, NodeData $node2) {
                     return strcmp(
-                        str_replace("/", "!", $node1->getPath()),
-                        str_replace("/", "!", $node2->getPath())
+                        str_replace("/", "!", $node1->getParentPath()),
+                        str_replace("/", "!", $node2->getParentPath())
                     );
                 }
             );
@@ -460,16 +466,10 @@ class ExportService extends AbstractService
     protected function writeNode(NodeData $nodeData)
     {
         $this->xmlWriter->startElement('node');
-        switch ($this->formatVersion){
-            case '1.0':
-                $this->xmlWriter->writeAttribute('nodeName', $nodeData->getName());
-                break;
-            case '2.0':
-                $this->xmlWriter->writeAttribute('nodeType', $nodeData->getNodeType()->getName());
-                break;
-            default:
-                throw new \RuntimeException(sprintf('Tried to export unsupported format version (%s).', $this->formatVersion), 1634721624);
+        if($this->formatVersion == '2.0') {
+            $this->xmlWriter->writeAttribute('nodeType', $nodeData->getNodeType()->getName());
         }
+        $this->xmlWriter->writeAttribute('nodeName', $nodeData->getName());
         $this->xmlWriter->writeAttribute('identifier', $nodeData->getIdentifier());
 
         if($this->debug) {
@@ -531,9 +531,9 @@ class ExportService extends AbstractService
         $this->xmlWriter->startElement('dimensions');
         foreach ($nodeData->getDimensionValues() as $dimensionKey => $dimensionValues) {
             foreach ($dimensionValues as $dimensionValue) {
-                //if($this->formatVersion == '1.0' || $dimensionKey != $this->languageDimension) {
+                if($dimensionKey != $this->languageDimension) {
                     $this->xmlWriter->writeElement($dimensionKey, $dimensionValue);
-               // }
+                }
             }
         }
         $this->xmlWriter->endElement();
