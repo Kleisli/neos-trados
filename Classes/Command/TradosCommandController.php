@@ -73,7 +73,7 @@ class TradosCommandController extends CommandController
         } catch (\Exception $exception) {
             $this->outputLine('<error>%s</error>', [$exception->getMessage()]);
         }
-        $this->outputLine('Peak memory used: %u', [memory_get_peak_usage()]);
+        $this->outputLine('Peak memory used: %s', [$this->humanReadableFileSize(memory_get_peak_usage())]);
     }
 
     /**
@@ -93,6 +93,20 @@ class TradosCommandController extends CommandController
         } catch (\Exception $exception) {
             $this->outputLine('<error>%s</error>', [$exception->getMessage()]);
         }
-        $this->outputLine('Peak memory used: %u', [memory_get_peak_usage()]);
+        $this->outputLine('Peak memory used: %s', [$this->humanReadableFileSize(memory_get_peak_usage())]);
+    }
+
+    private function humanReadableFileSize($size)
+    {
+        if ($size >= 1073741824) {
+            $fileSize = round($size / 1024 / 1024 / 1024,1) . 'GB';
+        } elseif ($size >= 1048576) {
+            $fileSize = round($size / 1024 / 1024,1) . 'MB';
+        } elseif($size >= 1024) {
+            $fileSize = round($size / 1024,1) . 'KB';
+        } else {
+            $fileSize = $size . ' bytes';
+        }
+        return $fileSize;
     }
 }
